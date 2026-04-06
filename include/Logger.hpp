@@ -1,19 +1,85 @@
 #ifndef LOGGER_HPP
 #define LOGGER_HPP
 
+#include "concurrentqueue.h"
 #include <iostream>
 #include <fstream>
 #include <string>
 #include <mutex>
 #include <chrono>
 #include <ctime>
+#include <atomic>
 #include <iomanip>
+#include <thread>
 
 enum class LogLevel { DEBUG, INFO, WARN, ERROR };
 
+struct LogItem {
+    LogLevel level;
+    std::string msg;
+    std::chrono::system_clock::time_point timestamp;
+
+    LogItem() = default;
+    LogItem(LogLevel l, std::string m) : level(l), msg(std::move(m)), timestamp(std::chrono::system_clock::now()) {}
+};
+
 class Logger {
+private:
+    std::ofstream fileStream_;
+    moodycamel::ConcurrentQueue<LogItem> queue_;
+    std::thread worker_;
+    std::atomic<bool> running_;
+    Logger() : running_(false) {};
+    Logger(const Logger&) = delete;
+    Logger& operator=(const Logger&) = delete;
+    
+    void processLogs() {
+        const size_t batch_size = 500;
+        LogItem items[batch_size];
+
+        while (running_ || queue_.size_approx() > 0) {
+            size_t count = queue_.try_dequeue_bulk(items, batch_size);
+
+            if (count > 0) {
+                for (size_t i = 0; i < count; i++) {
+                    writeToSink(items[i]);
+                }
+                fileStream_.flush();
+            }
+            else {
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+        }
+    }
+
+    void writeToSink(const LogItem& item) {
+        // std::string level_str;
+        // switch (item.level) {
+        //     case LogLevel::DEBUG: level_str = "[DEBUG]"; break;
+        //     case LogLevel::INFO:  level_str = "[INFO ]"; break;
+        //     case LogLevel::WARN:  level_str = "[WARN ]"; break;
+        //     case LogLevel::ERROR: level_str = "[ERROR]"; break;
+        // }
+
+        // auto ti = std::chrono::system_clock::to_time_t(item.timestamp);
+        // auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(item.timestamp.time_since_epoch()) % 1000;
+
+        // struct tm timeinfo; 
+        // localtime_r(&ti, &timeinfo); 
+
+        // std::stringstream ss;
+        // ss << std::put_time(&timeinfo, "%Y-%m-%d %H:%M:%S") 
+        // << "." << std::setfill('0') << std::setw(3) << ms.count()
+        // << " " << level_str << " " << item.msg << "\n";
+
+        // std::string final_msg = ss.str();
+
+        // if (fileStream_.is_open()) {
+        //     fileStream_ << final_msg;
+        // }
+    }
+
 public:
-    // 【单例模式】通过这个静态函数获取唯一的对象
     static Logger& getInstance() {
         static Logger instance;
         return instance;
@@ -21,9 +87,16 @@ public:
 
     // 设置日志文件
     void init(const std::string& filename) {
-        std::lock_guard<std::mutex> lock(mtx_);
-        if (fileStream_.is_open()) fileStream_.close();
-        fileStream_.open(filename, std::ios::app); // 追加模式打开
+        if (running_) return;
+        
+        fileStream_.open(filename, std::ios::app);
+        if (!fileStream_.is_open()) {
+            std::cerr << "无法打开日志文件" << filename << std::endl;
+            return;
+        }
+
+        running_ = true;
+        worker_ = std::thread(&Logger::processLogs, this);
     }
 
     /**
@@ -42,40 +115,17 @@ public:
      * - 线程安全：受 mtx_ 保护。
      */
     void log(LogLevel level, const std::string& msg) {
-        std::lock_guard<std::mutex> lock(mtx_); // 保证多线程打印不乱序
-
-        std::string levelStr;
-        switch (level) {
-            case LogLevel::DEBUG: levelStr = "[DEBUG]"; break;
-            case LogLevel::INFO:  levelStr = "[INFO ]"; break;
-            case LogLevel::WARN:  levelStr = "[WARN ]"; break;
-            case LogLevel::ERROR: levelStr = "[ERROR]"; break;
-        }
-
-        // 获取当前时间
-        auto now = std::chrono::system_clock::now();
-        auto time_t_now = std::chrono::system_clock::to_time_t(now);
-        auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()) % 1000;
-
-        // 格式化输出到控制台和文件
-        std::stringstream ss;
-        ss << std::put_time(std::localtime(&time_t_now), "%Y-%m-%d %H:%M:%S") 
-           << "." << std::setfill('0') << std::setw(3) << ms.count()
-           << " " << levelStr << " " << msg << std::endl;
-
-        std::cout << ss.str();
-        if (fileStream_.is_open()) {
-            fileStream_ << ss.str();
-            fileStream_.flush(); // 确保立刻写入硬盘
-        }
+        if (!running_) return;
+        queue_.enqueue(LogItem(level, std::move(msg)));
     }
 
-private:
-    Logger() {} // 私有构造函数，防止外部 new
-    ~Logger() { if (fileStream_.is_open()) fileStream_.close(); }
-    
-    std::ofstream fileStream_;
-    std::mutex mtx_;
+    ~Logger() {
+        running_ = false;
+        if (worker_.joinable()) worker_.join();
+        if (fileStream_.is_open()) {
+            fileStream_.close();
+        }
+    }
 };
 
 /**
@@ -89,5 +139,7 @@ private:
  * @param msg 日志内容字符串
  */
 #define LOG_ERROR(msg) Logger::getInstance().log(LogLevel::ERROR, msg)
+
+#define LOG_DEBUG(msg) Logger::getInstance().log(LogLevel::DEBUG, msg)
 
 #endif

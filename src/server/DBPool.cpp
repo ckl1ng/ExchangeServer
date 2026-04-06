@@ -62,5 +62,5 @@ std::unique_ptr<MYSQL, std::function<void(MYSQL*)>> DBPool::getConnection() {
         }
     };
 
-    return std::unique_ptr<MYSQL, decltype(deleter)>(conn, deleter);
+    return std::unique_ptr<MYSQL, std::function<void(MYSQL*)>>(conn, deleter);
 }

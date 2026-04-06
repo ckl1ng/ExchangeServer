@@ -1,12 +1,17 @@
+#ifndef SESSION_MANAGER_HPP
+#define SESSION_MANAGER_HPP
+
 #include "Router.hpp"
 #include <unordered_map>
 #include <mutex>
+#include <shared_mutex>
 #include <sys/epoll.h>
 #include <functional>
 #include <string>
 #include <iostream>
 #include <unistd.h>
 #include <fcntl.h>
+#include <atomic>
 #include <arpa/inet.h>
 #include <cstring>
 
@@ -20,8 +25,11 @@
  */
 class SessionManager {
 private:
-    std::unordered_map<int, std::shared_ptr<Session>> sessions_;
-    std::mutex mtx_;
+    static constexpr int MAX_FD = 65535;
+    // std::unordered_map<int, std::shared_ptr<Session>> sessions_;
+    std::atomic<Session*> sessions_[MAX_FD];
+
+    SessionManager() = default;
 
 public:
     /**
@@ -33,13 +41,19 @@ public:
         static SessionManager instance;
         return instance;
     }
-
-    std::shared_ptr<Session> getOrCreateSession(int fd) {
-        std::lock_guard<std::mutex> lock(mtx_);
-        if (sessions_.find(fd) == sessions_.end()) {
-            sessions_[fd] = std::make_shared<Session>(fd);
+    
+    // 仅在 TcpServer accept 新连接时调用（写锁）
+    void createSession(int fd) {
+        if (fd < MAX_FD) {
+            Session* old = sessions_[fd].exchange(new Session(fd), std::memory_order_acq_rel);
+            if (old) delete old;
         }
-        return sessions_[fd];
+    }
+
+    // 在收发数据时高频调用（读锁，支持48个线程完全并发）
+    Session* getSession(int fd) {
+        if (fd >= MAX_FD) return nullptr;
+        return sessions_[fd].load(std::memory_order_acquire);
     }
 
     /**
@@ -47,17 +61,21 @@ public:
      * @param fd 客户端套接字
      */
     void removeSession(int fd) {
-        std::lock_guard<std::mutex> lock(mtx_);
-        sessions_.erase(fd);
+        if (fd < MAX_FD) {
+            Session* s = sessions_[fd].exchange(nullptr, std::memory_order_acq_rel);
+            delete s;
+        }
     }
 
-    void cleanConnection(int client_fd) {
-        removeSession(client_fd);
-        close(client_fd);
-        LOG_INFO("连接 " + std::to_string(client_fd) + " 已关闭");
+    void cleanConnection(int fd) {
+        removeSession(fd);
+        close(fd);
+        // LOG_INFO("连接 " + std::to_string(client_fd) + " 已关闭");
     }
 
-    bool hasSession(int client_fd) {
-        return sessions_.count(client_fd);
+    bool hasSession(int fd) {
+        return sessions_[fd] == nullptr;
     }
 };
+
+#endif

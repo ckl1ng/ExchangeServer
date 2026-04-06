@@ -4,14 +4,29 @@
 #include "Router.hpp"
 #include "Repositories.h"
 #include "Logger.hpp"
-#include "json.hpp"
-#include "MatchingEngine.h"
+#include "Protocol.hpp"
+#include "MatchingEngine.hpp"
+#include "WALManager.hpp"
 #include "RedisPool.h"
+#include "UserManager.hpp"
+#include "TickerManager.hpp"
+#include "OrderIdGenerator.hpp"
 #include <iomanip>
 #include <sstream>
 #include <random>
 #include <chrono>
+#include <atomic>
+#include <unordered_map>
 #include <algorithm>
+
+inline uint32_t symbolToTickerId(const std::string& symbol) {
+    uint32_t id = TickerManager::getInstance().getTickerId(symbol);
+    return id != 0 ? id : 999;
+}
+
+inline std::string tickerIdToSymbol(uint32_t id) {
+    return TickerManager::getInstance().getSymbol(id);
+}
 
 /**
  * @class LoginHandler
@@ -25,23 +40,32 @@ private:
 public:
     LoginHandler(std::shared_ptr<IUserRepository>repo) : userRepo_(repo) {}
 
-    json handle(std::shared_ptr<Session> session, const json& req) override {
-        std::string username = req["username"];
-        std::string password = req["password"];
+    std::string handle(Session* session, const char* req_data, uint32_t req_len) override {
+        if (req_len < sizeof(AuthRequest)) return "";
+        const AuthRequest* req = reinterpret_cast<const AuthRequest*>(req_data);
+        std::string username = req->username;
+        std::string password = req->password;
 
-        json res;
+        AuthResponse res;
         if (userRepo_->checkLogin(username, password)) {
             LOG_INFO(username + ": 登录成功");
-            session->username = username; // 核心：在会话中绑定身份
-            res["status"] = "true";
-            res["msg"] = "登陆成功";
+            session->username = username; //在会话中绑定身份
+
+            uint64_t db_id = UserManager::getInstance().getId(username);
+            if (db_id == 0) {
+                db_id = userRepo_->getUserId(username);
+                if (db_id != 0) UserManager::getInstance().createUserAccount(db_id, username);
+            }
+            session->user_id = db_id;
+            res.status = 1;
+            res.user_id = db_id;
         }
         else {
             LOG_INFO(username + " :登录失败");
-            res["status"] = "false";
-            res["msg"] = "用户名不存在或密码错误";
+
+            res.status = 0;
         }
-        return res;
+        return std::string(reinterpret_cast<char*>(&res), sizeof(res));
     }
 };
 
@@ -57,23 +81,29 @@ private:
 public:
     RegisterUserHandler(std::shared_ptr<IUserRepository> repo) :userRepo_(repo) {}
 
-    json handle(std::shared_ptr<Session> session, const json& req) override {
-        std::string username = req["username"];
-        std::string password = req["password"];
+    std::string handle(Session* session, const char* req_data, uint32_t req_len) override {
+        if (req_len < sizeof(AuthRequest)) return "";
+        const AuthRequest* req = reinterpret_cast<const AuthRequest*>(req_data);
+        std::string username = req->username;
+        std::string password = req->password;
 
-        json res;
+        AuthResponse res;
+        memset(&res, 0, sizeof(res));
         if (userRepo_->registerUser(username, password)) {
-            LOG_INFO(username + "注册成功");
+            // LOG_INFO(username + "注册成功");
+            
+            uint64_t new_id = userRepo_->getUserId(username);
+            UserManager::getInstance().createUserAccount(new_id, username);
             session->username = username;
-            res["status"] = "true";
-            res["msg"] = "注册成功";
+            session->user_id = new_id;
+            res.status = 1;
+            res.user_id = new_id;
         }
         else {
-            LOG_INFO(username + ": 注册失败（账号已存在）");
-            res["status"] = "false";
-            res["msg"] = "账号已存在";
+            // LOG_INFO(username + ": 注册失败（账号已存在）");
+            res.status = 0;
         }
-        return res;
+        return std::string(reinterpret_cast<char*>(&res), sizeof(res));
     }
 };
 
@@ -89,19 +119,18 @@ private:
 public:
     ExitHandler(std::shared_ptr<IUserRepository> repo) :userRepo_(repo) {}
 
-    json handle(std::shared_ptr<Session> session, const json& req) override {
-        json res;
+    std::string handle(Session* session, const char* req_data, uint32_t req_len) override {
+        GenericResponse res;
+        memset(&res, 0, sizeof(res));
         if (session->isLoggedIn()) {
-            LOG_INFO(session->username + ": 退出账号");
+            // LOG_INFO(session->username + ": 退出账号");
             session->username = ""; // 清空登录状态
-            res["status"] = "true";
-            res["msg"] = "退出账号成功";
+            res.status = 1;
         }
         else {
-            res["status"] = "false";
-            res["msg"] = "无法退出，账号未登录";
+            res.status = 0;
         }
-        return res;
+        return std::string(reinterpret_cast<char*>(&res), sizeof(res));
     }
 };
 
@@ -111,28 +140,19 @@ public:
  * @details 返回格式化的两位小数金额字符串。
  */
 class GetBalanceHandler : public IHandler {
-private:
-    std::shared_ptr<IUserRepository> userRepo_;
-
 public:
-    GetBalanceHandler(std::shared_ptr<IUserRepository> repo) :userRepo_(repo) {}
-
-    json handle(std::shared_ptr<Session> session, const json& req) override {
-        json res;
+    std::string handle(Session* session, const char* req_data, uint32_t req_len) override {
+        BalanceResponse res;
+        memset(&res, 0, sizeof(res));
         if (!session->isLoggedIn()) {
-            res["status"] = "false";
-            res["msg"] = "未登录，无法查询余额";
-            return res;
+            res.status = 0;
+            return std::string(reinterpret_cast<char*>(&res), sizeof(res));
         }
-        LOG_INFO("用户 " + session->username + " 查询余额");
+        // LOG_INFO("用户 " + session->username + " 查询余额");
 
-        double balance = userRepo_->getBalance(session->username);
-        std::stringstream ss;
-        ss << std::fixed << std::setprecision(2) << balance; // 格式化为 0.00 格式
-
-        res["status"] = "true";
-        res["msg"] = ss.str();
-        return res;
+        res.status = 1;
+        res.balance = UserManager::getInstance().getBalance(session->user_id);
+        return std::string(reinterpret_cast<char*>(&res), sizeof(res));
     }
 };
 
@@ -148,14 +168,22 @@ private:
 public:
     GetAllStocksHandler(std::shared_ptr<IStockRepository>stockRepo): stockRepo_(stockRepo){}
 
-    json handle(std::shared_ptr<Session> session, const json& req) override {
-        json res;
-        res["status"] = "true";
-
+    std::string handle(Session* session, const char* req_data, uint32_t req_len) override {
         std::vector<std::string> stocks = stockRepo_->getAllStocks();
-        res["stocks"] = stocks;
-        res["msg"] = "获取市场可用股票列表成功";
-        return res;
+        
+        StocksResponseHeader header;
+        header.status = 1;
+        header.count = stocks.size();
+
+        std::string reply(reinterpret_cast<char*>(&header), sizeof(header));
+        for (const auto& sym : stocks) {
+            StockItem item;
+            memset(&item, 0, sizeof(item));
+            item.ticker_id = symbolToTickerId(sym);
+            strncpy(item.symbol, sym.c_str(), sizeof(item.symbol) - 1);
+            reply.append(reinterpret_cast<char*>(&item), sizeof(item));
+        }
+        return reply;
     }
 };
 
@@ -171,34 +199,32 @@ private:
 public:
     DepositHandler(std::shared_ptr<IUserRepository> repo) :userRepo_(repo) {}
 
-    json handle(std::shared_ptr<Session> session, const json& req) override {
-        json res;
+    std::string handle(Session* session, const char* req_data, uint32_t req_len) override {
+        DepositResponse res;
+        memset(&res, 0, sizeof(res));
         if (!session->isLoggedIn()) {
-            res["status"] = "false";
-            res["msg"] = "未登录";
-            return res;
+            res.status = 0;
+            return std::string(reinterpret_cast<char*>(&res), sizeof(res));
         }
 
-        double amount = req["amount"];
+        if (req_len < sizeof(DepositRequest)) return "";
+        const DepositRequest* req = reinterpret_cast<const DepositRequest*>(req_data);
+
+        int64_t amount = req->amount;
         if (amount <= 0) {
-            res["status"] = "false";
-            res["msg"] = "充值金额必须大于零";
+            res.status = 0;
         }
         else {
             if (userRepo_->updateBalance(session->username, amount)) {
-                LOG_INFO(session->username + " 成功充值 " + std::to_string(amount));
-                res["status"] = "true";
-                res["msg"] = "充值成功";
-
-                std::stringstream ss;
-                ss << std::fixed << std::setprecision(2) << userRepo_->getBalance(session->username);
-                res["new_balance"] = ss.str();
+                // LOG_INFO(session->username + " 成功充值 " + std::to_string(amount));
+                UserManager::getInstance().addBalance(session->user_id, amount);
+                res.status = 1;
+                res.new_balance = userRepo_->getBalance(session->username);
             } else {
-                res["status"] = "false";
-                res["msg"] = "数据库操作失败";
+                res.status = 0;
             }
         }
-        return res;
+        return std::string(reinterpret_cast<char*>(&res), sizeof(res));
     }
 };
 
@@ -212,54 +238,52 @@ public:
  */
 class TradeHandler : public IHandler {
 private:
-    std::shared_ptr<IUserRepository> userRepo_;
-    std::shared_ptr<IStockRepository> stockRepo_;
-    std::shared_ptr<MatchingEngine> engine_;
+    std::shared_ptr<WALManager> wal_;
 
 public:
-    TradeHandler(std::shared_ptr<IUserRepository> userRepo, std::shared_ptr<IStockRepository> stockRepo, std::shared_ptr<MatchingEngine> engine): userRepo_(userRepo), stockRepo_(stockRepo), engine_(engine) {}
+    TradeHandler(std::shared_ptr<WALManager> wal) : wal_(wal) {}
 
-    json handle(std::shared_ptr<Session> session, const json& req) override {
-        json res;
+    std::string handle(Session* session, const char* req_s, uint32_t req_len) override {
+        TradeResponse res;
+        memset(&res, 0, sizeof(res));
         if (!session->isLoggedIn()) {
-            res["status"] = "false";
-            res["msg"] = "未登录";
-            return res;
+            res.status = 0;
+            return std::string(reinterpret_cast<char*>(&res), sizeof(res));
         }
 
-        std::string action = req["action"]; // "buy" 或 "sell"
-        std::string symbol = req["symbol"];
-        double price = req["price"];
-        int amount = req["amount"];
+        if (req_len < sizeof(TradeRequest)) return "";
+        const TradeRequest* req = reinterpret_cast<const TradeRequest*>(req_s);
 
-        if (action == "buy") {
-            double total_cost = price * amount;
-            // 先从数据库扣钱
-            if (userRepo_->deductBalance(session->username, total_cost)) {
-                Order o = {session->username, symbol, price, amount};
-                engine_->matchOrders(o, true); // 送去撮合
-                res["status"] = "true";
-                LOG_INFO("用户 " + session->username + " 已提交买单");
+        auto order = std::make_shared<Order>();
+        order->order_id = OrderIdGenerator::getInstance().generate();
+        order->user_id = session->user_id;
+        order->ticker_id = req->ticker_id;
+        order->side = (req->side == 0) ? OrderSide::BUY : OrderSide::SELL;
+        order->price = req->price;
+        order->quantity = req->amount;
+        order->timestamp = std::chrono::system_clock::now().time_since_epoch().count();
+
+        if (order->side == OrderSide::BUY) {
+            int64_t total_cost = req->price * req->amount;
+            if (UserManager::getInstance().tryFreezeBalance(session->user_id, total_cost)) {
+                wal_->appendOrder(order); 
+                res.status = 1;
+                // LOG_INFO("用户 " + session->username + " 已提交买单");
             } else {
-                res["status"] = "false";
-                res["msg"] = "余额不足或下单失败";
+                res.status = 0;
             }
         }
         else {
-            // 先从数据库扣持仓
-            if (stockRepo_->deductStockHolding(session->username, symbol, amount)) {
-                Order o = {session->username, symbol, price, amount};
-                engine_->matchOrders(o, false); // 送去撮合
-                res["status"] = "true";
-                res["msg"] = "卖出订单已接收";
-                LOG_INFO("用户 " + session->username + " 已提交卖单");
+            if (UserManager::getInstance().tryFreezeStock(session->user_id, order->ticker_id, req->amount)) {
+                wal_->appendOrder(order); 
+                res.status = 1;
+                // LOG_INFO("用户 " + session->username + " 已提交卖单");
             }
             else {
-                res["status"] = "false";
-                res["msg"] = "该股票持仓不足";
+                res.status = 0;
             }
         }
-        return res;
+        return std::string(reinterpret_cast<char*>(&res), sizeof(res));
     }
 };
 
@@ -273,17 +297,34 @@ private:
     std::shared_ptr<IStockRepository> stockRepo_;
 public:
     GetHoldingsHandler(std::shared_ptr<IStockRepository> stockRepo) : stockRepo_(stockRepo) {}
-    json handle(std::shared_ptr<Session> session, const json& req) override {
-        json res;
+    std::string handle(Session* session, const char* req_data, uint32_t req_len) override {
+        HoldingsResponseHeader header;
+        memset(&header, 0, sizeof(header));
+
         if (!session->isLoggedIn()) {
-            res["status"] = "false";
-            res["msg"] = "未登录，无法查询";
-            return res;
+            header.status = 0;
+            return std::string(reinterpret_cast<char*>(&header), sizeof(header));
         }
-        LOG_INFO("用户 " + session->username + " 已检查持仓");
-        res["status"] = "true";
-        res["data"] = stockRepo_->getAllHoldings(session->username);
-        return res;
+
+        auto holdings = UserManager::getInstance().getHoldings(session->user_id);
+        std::vector<HoldingItem> items;
+        for(const auto& [ticker_id, qty] : holdings) {
+            if (qty > 0) {
+                HoldingItem item;
+                item.ticker_id = ticker_id;
+                item.quantity = qty;
+                items.push_back(item);
+            }
+        }
+
+        header.status = 1;
+        header.count = items.size();
+        std::string reply(reinterpret_cast<char*>(&header), sizeof(header));
+        if (!items.empty()) {
+            reply.append(reinterpret_cast<char*>(items.data()), items.size() * sizeof(HoldingItem));
+        }
+        // LOG_INFO("用户 " + session->username + " 已检查持仓");
+        return reply;
     }
 };
 
@@ -293,39 +334,27 @@ public:
  * @details 从 Redis 订单簿中获取指定股票的盘口第一档 (Best Bid & Offer)。
  */
 class GetMarketHandler : public IHandler {
+private:
+    std::shared_ptr<MatchingEngine> engine_;
+
 public:
-    json handle(std::shared_ptr<Session> session, const json& req) override {
-        json res;
-        std::string symbol = req["symbol"];
-        auto conn_ptr = RedisPool::getInstance().getConnection();
-        redisContext* conn = conn_ptr.get();
+    GetMarketHandler(std::shared_ptr<MatchingEngine> engine) : engine_(engine) {}
 
-        std::string buy_key = "buy_book:" + symbol;
-        std::string sell_key = "sell_book:" + symbol;
+    std::string handle(Session* session, const char* req_data, uint32_t req_len) override {
+        MarketResponse res;
+        memset(&res, 0, sizeof(res));
 
-        json data;
-        // ZREVRANGE 获取最高买价 (Bid)
-        redisReply* buy_reply = (redisReply*)redisCommand(conn, "ZREVRANGE %s 0 0 WITHSCORES", buy_key.c_str());
-        if (buy_reply && buy_reply->type == REDIS_REPLY_ARRAY && buy_reply->elements >= 2) {
-            data["bid"] = std::stod(buy_reply->element[1]->str);
-        } else {
-            data["bid"] = 0.0;
-        }
-        if (buy_reply) freeReplyObject(buy_reply);
+        if (req_len < sizeof(MarketRequest)) return "";
+        const MarketRequest* req = reinterpret_cast<const MarketRequest*>(req_data);
 
-        // ZRANGE 获取最低卖价 (Ask)
-        redisReply* sell_reply = (redisReply*)redisCommand(conn, "ZRANGE %s 0 0 WITHSCORES", sell_key.c_str());
-        if (sell_reply && sell_reply->type == REDIS_REPLY_ARRAY && sell_reply->elements >= 2) {
-            data["ask"] = std::stod(sell_reply->element[1]->str);
-        } else {
-            data["ask"] = 0.0;
-        }
-        if (sell_reply) freeReplyObject(sell_reply);
+        uint32_t ticker_id = req->ticker_id;
+        int64_t best_bid = 0, best_ask = 0;
+        engine_->getBestBidOffer(ticker_id, best_bid, best_ask);
 
-        LOG_INFO("用户 " + session->username + " 查看 " + symbol + " 股票行情");
-        res["status"] = "true";
-        res["data"] = data;
-        return res;
+        res.status = 1;
+        res.best_bid = best_bid;
+        res.best_ask = best_ask;
+        return std::string(reinterpret_cast<char*>(&res), sizeof(res));
     }
 };
 
@@ -336,61 +365,54 @@ public:
  */
 class GetNewsHandler : public IHandler {
 public:
-    json handle(std::shared_ptr<Session> session, const json& req) override {
-        json res;
-        res["status"] = "true";
+    std::string handle(Session* session, const char* req_data, uint32_t req_len) override {
+        NewsResponseHeader header;
+        header.status = 1;
 
-        // 模拟新闻池
         struct NewsTemplate {
             std::string title;
-            std::string type; // "Macro", "Tech", "Earnings"
-            std::string symbol; // 相关公司
+            std::string type; 
+            std::string symbol; 
         };
 
         std::vector<NewsTemplate> newsPool = {
-            // AAPL 专用新闻
             {"Apple (AAPL) 宣布将自研 AI 芯片整合至全线产品，市场反响剧烈", "Tech", "AAPL"},
             {"iPhone 16 供应链传出利好，印度组装效率大幅提升超出预期", "Tech", "AAPL"},
             {"App Store 服务业务收入创季度新高，AAPL 股价盘前上涨 2%", "Earnings", "AAPL"},
-            
-            // NVDA 专用新闻
             {"Nvidia (NVDA) 发布 Blackwell 架构 GPU，AI 计算性能提升 5 倍", "Tech", "NVDA"},
             {"全球数据中心对 H100 需求依然强劲，NVDA 订单已排至 2025 年", "Macro", "NVDA"},
             {"分析师上调 NVDA 目标价至 $1000，称 AI 革命尚处于早期阶段", "Tech", "NVDA"},
-            
-            // TSLA 专用新闻
             {"Tesla (TSLA) FSD V12 版本在北美全量推送，自动驾驶胜率提升", "Tech", "TSLA"},
             {"特斯拉上海超级工厂扩建项目获批，年产能有望突破 150 万辆", "Macro", "TSLA"},
             {"TSLA 储能业务 (Megapack) 利润率显著提升，成为新的增长引擎", "Earnings", "TSLA"},
-            
-            // 宏观新闻
             {"美联储 3 月会议纪要显示降息预期窗口可能延后，纳指承压", "Macro", "Global"},
             {"科技巨头集体增持 AI 基础设施，半导体板块出现避险资金流入", "Macro", "Global"},
-            {"美债收益率小幅回落，成长型科技股（AAPL, NVDA）吸引力增强", "Macro", "Global"}
+            {"美债收益率小幅回落，成长型科技股吸引力增强", "Macro", "Global"}
         };
 
-        // 随机打乱并抽取 3 条
         std::random_device rd;
         std::mt19937 g(rd());
         std::shuffle(newsPool.begin(), newsPool.end(), g);
 
-        json newsList = json::array();
         auto now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
-
+        
+        std::vector<NewsItem> items;
         for (int i = 0; i < 3; ++i) {
-            json item;
-            item["title"] = newsPool[i].title;
-            item["type"] = newsPool[i].type;
-            item["symbol"] = newsPool[i].symbol;
-            item["time"] = now - (i * 300); // 模拟每隔5分钟一条
-            
-            newsList.push_back(item);
+            NewsItem item;
+            memset(&item, 0, sizeof(item));
+            item.time = now - (i * 300);
+            strncpy(item.title, newsPool[i].title.c_str(), sizeof(item.title) - 1);
+            strncpy(item.type, newsPool[i].type.c_str(), sizeof(item.type) - 1);
+            strncpy(item.symbol, newsPool[i].symbol.c_str(), sizeof(item.symbol) - 1);
+            items.push_back(item);
         }
 
-        LOG_INFO("用户 " + session->username + " 查看新闻");
-        res["news"] = newsList;
-        res["total_count"] = 3;
-        return res;
+        header.count = items.size();
+        std::string reply(reinterpret_cast<char*>(&header), sizeof(header));
+        reply.append(reinterpret_cast<char*>(items.data()), items.size() * sizeof(NewsItem));
+        
+        // LOG_INFO("用户 " + session->username + " 查看新闻");
+        return reply;
     }
 };
 
@@ -400,38 +422,42 @@ public:
  */
 class GetTrendHandler : public IHandler {
 public:
-    json handle(std::shared_ptr<Session> session, const json& req) override {
-        json res;
-        std::string symbol = req.value("symbol", "AAPL");
+    std::string handle(Session* session, const char* req_data, uint32_t req_len) override {
+        TrendResponseHeader header;
+        memset(&header, 0, sizeof(header));
+
+        if (req_len < sizeof(TrendRequest)) return "";
+        const TrendRequest* req = reinterpret_cast<const TrendRequest*>(req_data);
+        
+        uint32_t ticker_id = req->ticker_id;
         
         auto conn_ptr = RedisPool::getInstance().getConnection();
         redisContext* conn = conn_ptr.get();
-        std::string key = "trend:" + symbol;
+        std::string key = "history:trade:" + std::to_string(ticker_id);
 
-        auto reply = make_reply(redisCommand(conn, "LRANGE %s 0 9", key.c_str()));
+        auto reply = make_reply(redisCommand(conn, "ZREVRANGE %s 0 9", key.c_str()));
 
-        json prices = json::array();
+        std::vector<uint64_t> prices;
         if (reply && reply->type == REDIS_REPLY_ARRAY) {
             for (size_t i = 0; i < reply->elements; i++) {
-                prices.push_back(std::stod(reply->element[i]->str));
+                try {
+                    json j = json::parse(reply->element[i]->str);
+                    prices.push_back(j["price"].get<uint64_t>());
+                } catch(...) {}
             }
             std::reverse(prices.begin(), prices.end());
         }
 
-        if (prices.empty()) {
-            res["status"] = "true";
-            res["trend"] = {0.0};
-            res["msg"] = "暂无成交记录";
-        }
-        else {
-            res["status"] = "true";
-            res["symbol"] = symbol;
-            res["trend"] = prices;
-            res["msg"] = "获取最近成交趋势成功";
+        header.status = 1;
+        header.count = prices.size();
+        
+        std::string reply_str(reinterpret_cast<char*>(&header), sizeof(header));
+        if (!prices.empty()) {
+            reply_str.append(reinterpret_cast<char*>(prices.data()), prices.size() * sizeof(uint64_t));
         }
 
-        LOG_INFO("用户 " + session->username + " 查看价格走势");
-        return res;
+        // LOG_INFO("用户 " + session->username + " 查看价格走势");
+        return reply_str;
     }
 };
 
@@ -441,64 +467,44 @@ public:
  * @details 扫描 Redis 订单簿，筛选出属于当前用户的未成交挂单。
  */
 class GetOrdersHandler : public IHandler {
+private:
+    std::shared_ptr<MatchingEngine> engine_;
+
 public:
-    json handle(std::shared_ptr<Session> session, const json& req) override {
-        json res;
+    GetOrdersHandler(std::shared_ptr<MatchingEngine> engine) : engine_(engine) {}
+
+    std::string handle(Session* session, const char* req_data, uint32_t req_len) override {
+        OrdersResponseHeader header;
+        memset(&header, 0, sizeof(header));
+
         if (!session->isLoggedIn()) {
-            res["status"] = "false";
-            res["msg"] = "未登录，无法查询";
-            return res;
+            header.status = 0;
+            return std::string(reinterpret_cast<char*>(&header), sizeof(header));
+        }
+        
+        std::vector<std::shared_ptr<Order>> active_orders = engine_->getUserActiveOrder(session->user_id);
+
+        std::vector<OrderItem> items;
+        for (const auto& o : active_orders) {
+            OrderItem item;
+            item.order_id = o->order_id;
+            item.ticker_id = o->ticker_id;
+            item.side = (o->side == OrderSide::BUY) ? 0 : 1;
+            item.price = o->price;
+            item.amount = o->quantity;
+            items.push_back(item);
         }
 
-        auto conn_ptr = RedisPool::getInstance().getConnection();
-        redisContext* conn = conn_ptr.get();
-        json orders = json::array();
+        header.status = 1;
+        header.count = items.size();
 
-        // 内部 Lambda：扫描 Redis Key 并过滤用户订单
-        auto fetchOrder = [&](const std::string& prefix, const std::string& type) {
-            auto reply = make_reply(redisCommand(conn, "KEYS %s*", prefix.c_str()));
-            if (reply && reply->type == REDIS_REPLY_ARRAY) {
-                for (size_t i = 0; i < reply->elements; i++) {
-                    std::string key = reply->element[i]->str;
-                    std::string symbol = key.substr(prefix.length() + 1); // 修正前缀长度
+        std::string reply(reinterpret_cast<char*>(&header), sizeof(header));
+        if (!items.empty()) {
+            reply.append(reinterpret_cast<char*>(items.data()), items.size() * sizeof(OrderItem));
+        }
 
-                    auto zrep = make_reply(redisCommand(conn, "ZRANGE %s 0 -1 WITHSCORES", key.c_str()));
-                    
-                    if (zrep && zrep->type == REDIS_REPLY_ARRAY) {
-                        for (size_t j = 0; j < zrep->elements; j+=2) {
-                            std::string member = zrep->element[j]->str;
-                            double price = std::stod(zrep->element[j+1]->str);
-
-                            // 解析 member 格式: "ts:user:amount"
-                            size_t p1 = member.find(':');
-                            size_t p2 = member.find(':', p1 + 1);
-                            if (p1 != std::string::npos && p2 !=std::string::npos) {
-                                std::string order_user = member.substr(p1 + 1, p2 - p1 - 1);
-
-                                if (order_user == session->username) {
-                                    int amount = std::stoi(member.substr(p2 + 1));
-                                    json order;
-                                    order["symbol"] = symbol;
-                                    order["type"] = type;
-                                    order["price"] = price;
-                                    order["amount"] = amount;
-                                    order["order_id"] = member;
-                                    orders.push_back(order);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        };
-
-        fetchOrder("buy_book", "buy");
-        fetchOrder("sell_book", "sell");
-
-        res["status"] = "true";
-        res["data"] = orders;
-        LOG_INFO("用户 " + session->username + " 查看当前活跃订单");
-        return res;
+        // LOG_INFO("用户 " + session->username + " 查看当前活跃订单");
+        return reply;
     }
 };
 
@@ -514,79 +520,27 @@ public:
  */
 class CancelOrderHandler : public IHandler {
 private:
-    std::shared_ptr<IUserRepository> userRepo_;
-    std::shared_ptr<IStockRepository> stockRepo_;
+    std::shared_ptr<WALManager> wal_;
 
 public:
-    CancelOrderHandler(std::shared_ptr<IUserRepository> userRepo, std::shared_ptr<IStockRepository> stockRepo): userRepo_(userRepo), stockRepo_(stockRepo) {}
+    CancelOrderHandler(std::shared_ptr<WALManager>wal) : wal_(wal) {}
+    
+    std::string handle(Session* session, const char* req_data, uint32_t req_len) override {
+        GenericResponse res;
+        memset(&res, 0, sizeof(res));
 
-    json handle(std::shared_ptr<Session> session, const json& req) override {
-        json res;
         if (!session->isLoggedIn()) {
-            res["status"] = "false";
-            res["msg"] = "未登录";
-            return res;
+            // LOG_INFO("用户未登录，无法查询");
+            res.status = 0;
+            return std::string(reinterpret_cast<char*>(&res), sizeof(res));
         }
 
-        std::string symbol = req["symbol"];
-        std::string type = req["type"];
-        std::string order_id = req["order_id"];
+        if (req_len < sizeof(CancelRequest)) return "";
+        const CancelRequest* req = reinterpret_cast<const CancelRequest*>(req_data);
 
-        // 1. 基础格式解析
-        size_t p1 = order_id.find(':');
-        size_t p2 = order_id.find(':', p1 + 1);
-        if (p1 == std::string::npos || p2 == std::string::npos) {
-            res["status"] = "false";
-            res["msg"] = "无效的订单格式";
-            return res;
-        }
-
-        // 2. 越权校验：防止 A 撤销 B 的订单
-        std::string order_user = order_id.substr(p1 + 1, p2 - p1 - 1);
-        if (order_user != session->username) {
-            res["status"] = "false";
-            res["msg"] = "您无法删除他人订单";
-            return res;
-        }
-
-        int amount = std::stoi(order_id.substr(p2 + 1));
-        std::string key = (type == "buy" ? "buy_book:" : "sell_book:") + symbol;
-
-        auto conn_ptr = RedisPool::getInstance().getConnection();
-        redisContext* conn = conn_ptr.get();
-
-        // 3. 价格校验：确保退款金额正确
-        auto zscore_rep = make_reply(redisCommand(conn, "ZSCORE %s %s", key.c_str(), order_id.c_str()));
-        if (!zscore_rep || zscore_rep->type != REDIS_REPLY_STRING) {
-            res["status"] = "false";
-            res["msg"] = "撤单失败，订单不存在或已成交";
-            return res;
-        }
-
-        double real_price = std::stod(zscore_rep->str);
-
-        // 4. 原子撤销：ZREM 返回 1 表示撤销成功，返回 0 表示已被撮合
-        auto rm_reply = make_reply(redisCommand(conn, "ZREM %s %s", key.c_str(), order_id.c_str()));
-
-        if (rm_reply && rm_reply->type == REDIS_REPLY_INTEGER && rm_reply->integer == 1) {
-            // 资产退回
-            if (type == "buy") {
-                userRepo_->updateBalance(session->username, real_price * amount);
-            }
-            else if (type == "sell") {  
-                stockRepo_->updateStockHolding(session->username, symbol, amount);
-            }
-            LOG_INFO(session->username + " 撤单成功: " + order_id);
-            res["status"] = "true";
-            res["msg"] = "撤单成功，相应资产已退回";
-        }
-        else {
-            res["status"] = "false";
-            res["msg"] = "撤单失败，订单已瞬间成交";
-        }
-        LOG_INFO("用户 " + session->username + " 申请撤单");
-
-        return res;
+        wal_->appendCancel(req->ticker_id, req->order_id, session->user_id);
+        res.status = 1;
+        return std::string(reinterpret_cast<char*>(&res), sizeof(res));
     }
 };
 

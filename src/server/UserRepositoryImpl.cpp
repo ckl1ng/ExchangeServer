@@ -38,7 +38,7 @@ bool UserRepositoryImpl::registerUser(const std::string& username, const std::st
     bool success = (mysql_stmt_execute(stmt) == 0);
     
     if (!success) {
-        std::cerr << "注册失败: " << mysql_stmt_error(stmt) << std::endl;
+        // std::cerr << "注册失败: " << mysql_stmt_error(stmt) << std::endl;
     }
 
     mysql_stmt_close(stmt);
@@ -79,7 +79,7 @@ bool UserRepositoryImpl::checkLogin(const std::string& username, const std::stri
     return exists;
 }
 
-double UserRepositoryImpl::getBalance(const std::string& username) {
+int64_t UserRepositoryImpl::getBalance(const std::string& username) {
     auto conn_ptr = DBPool::getInstance().getConnection();
     MYSQL* conn = conn_ptr.get();
 
@@ -103,14 +103,14 @@ double UserRepositoryImpl::getBalance(const std::string& username) {
     mysql_stmt_execute(stmt);
 
     // 绑定输出结果
-    double balance = 0.0;
+    int64_t balance = 0;
     unsigned long length;
     bool is_null;
     bool error;
     
     MYSQL_BIND result_bind[1];
     memset(result_bind, 0, sizeof(result_bind));
-    result_bind[0].buffer_type = MYSQL_TYPE_DOUBLE; // 假设数据库中是 double/decimal
+    result_bind[0].buffer_type = MYSQL_TYPE_LONGLONG; // 假设数据库中是 double/decimal
     result_bind[0].buffer = (char*)&balance;
     result_bind[0].is_null = &is_null;
     result_bind[0].length = &length;
@@ -127,7 +127,7 @@ double UserRepositoryImpl::getBalance(const std::string& username) {
     return final_balance;
 }
 
-bool UserRepositoryImpl::updateBalance(const std::string& username, double amount) {
+bool UserRepositoryImpl::updateBalance(const std::string& username, int64_t amount) {
     auto conn_ptr = DBPool::getInstance().getConnection();
     MYSQL* conn = conn_ptr.get();
     
@@ -143,7 +143,7 @@ bool UserRepositoryImpl::updateBalance(const std::string& username, double amoun
 
     MYSQL_BIND bind[2];
     memset(bind, 0, sizeof(bind));
-    bind[0].buffer_type = MYSQL_TYPE_DOUBLE;
+    bind[0].buffer_type = MYSQL_TYPE_LONGLONG;
     bind[0].buffer = (char*)&amount;
     bind[1].buffer_type = MYSQL_TYPE_STRING;
     bind[1].buffer = (char*)username.c_str();
@@ -155,7 +155,7 @@ bool UserRepositoryImpl::updateBalance(const std::string& username, double amoun
     return success;
 }
 
-bool UserRepositoryImpl::deductBalance(const std::string& username, double amount) {
+bool UserRepositoryImpl::deductBalance(const std::string& username, int64_t amount) {
     auto conn_ptr = DBPool::getInstance().getConnection();
     MYSQL* conn = conn_ptr.get();
     
@@ -174,14 +174,14 @@ bool UserRepositoryImpl::deductBalance(const std::string& username, double amoun
     MYSQL_BIND bind[3];
     memset(bind, 0, sizeof(bind));
     
-    bind[0].buffer_type = MYSQL_TYPE_DOUBLE;
+    bind[0].buffer_type = MYSQL_TYPE_LONGLONG;
     bind[0].buffer = (char*)&amount;
     
     bind[1].buffer_type = MYSQL_TYPE_STRING;
     bind[1].buffer = (char*)username.c_str();
     bind[1].buffer_length = username.length();
 
-    bind[2].buffer_type = MYSQL_TYPE_DOUBLE;
+    bind[2].buffer_type = MYSQL_TYPE_LONGLONG;
     bind[2].buffer = (char*)&amount;
 
     mysql_stmt_bind_param(stmt, bind);
@@ -191,4 +191,24 @@ bool UserRepositoryImpl::deductBalance(const std::string& username, double amoun
     mysql_stmt_close(stmt);
 
     return affected_rows > 0;
+}
+
+uint64_t UserRepositoryImpl::getUserId(const std::string& username) {
+    auto conn_ptr = DBPool::getInstance().getConnection();
+    MYSQL* conn = conn_ptr.get();
+    
+    char escaped[256];
+    mysql_real_escape_string(conn, escaped, username.c_str(), username.length());
+    std::string sql = "SELECT id FROM accounts WHERE username='" + std::string(escaped) + "'";
+    
+    if (mysql_query(conn, sql.c_str())) return 0;
+    
+    MYSQL_RES* res = mysql_store_result(conn);
+    uint64_t id = 0;
+    if (res) {
+        MYSQL_ROW row = mysql_fetch_row(res);
+        if (row && row[0]) id = std::stoull(row[0]);
+        mysql_free_result(res);
+    }
+    return id;
 }

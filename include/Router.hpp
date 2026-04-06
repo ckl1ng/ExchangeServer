@@ -1,8 +1,9 @@
 #ifndef ROUTER_HPP
 #define ROUTER_HPP
 
-#include "json.hpp"
 #include "Logger.hpp"
+#include "Protocol.hpp"
+#include "json.hpp"
 #include <memory>
 #include <string>
 #include <mutex>
@@ -19,7 +20,9 @@ using json = nlohmann::json;
 struct Session { 
     int fd;
     std::string buffer;
+
     std::string username;
+    uint64_t user_id = 0;
     std::mutex mtx;
 
     /**
@@ -54,7 +57,7 @@ public:
      * @param req     解析后的 JSON 请求报文
      * @return json   返回给客户端的 JSON 响应报文
      */
-    virtual json handle(std::shared_ptr<Session> session, const json& req) = 0;
+    virtual std::string handle(Session* session, const char* req, uint32_t req_len) = 0;
 };
 
 /**
@@ -67,49 +70,37 @@ class Router {
 public:
     /**
      * @brief 处理器映射表
-     * Key: action 字符串（如 "login", "buy"）
-     * Value: 对应的 Handler 智能指针
      */
-    std::unordered_map<std::string, std::shared_ptr<IHandler>> handlers_;
+    std::unordered_map<MsgType, std::shared_ptr<IHandler>> handlers_;
+    /**
     /**
      * @brief 注册业务处理器
      * 
-     * @param action  请求指令名称
+     * @param type    消息类型枚举
      * @param handler 处理器实例指针
-     * @note 通常在程序启动初始化阶段 (main 函数) 调用此方法。
      */
-    void registerHandler(const std::string& action, std::shared_ptr<IHandler> handler) {
-        handlers_[action] = handler;
+    void registerHandler(MsgType type, std::shared_ptr<IHandler> handler) {
+        handlers_[type] = handler;
     }
 
     /**
      * @brief 核心分发逻辑
      * 
-     * 根据请求中的 "action" 字段查找并调用对应的处理器。
+     * 根据请求中的 MsgType 查找并调用对应的处理器。
      * 
      * @param Session 当前会话对象指针
-     * @param req     客户端请求 JSON
-     * @return json   业务处理结果或错误信息
-     * 
-     * @details 
-     * 如果请求中缺少 action 字段，或请求了未注册的 action，
-     * 该函数会记录一条 ERROR 日志并返回标准错误 JSON。
+     * @param type    请求的消息类型
+     * @param req     客户端请求数据指针
+     * @param req_len 请求包体长度
+     * @return std::string 业务处理结果（二进制数据）
      */
-    json dispatch(std::shared_ptr<Session> Session, const json& req) {
+    std::string dispatch(Session* Session, MsgType type, const char* req, uint32_t req_len) {
         // 尝试从 JSON 中提取 action 字段，默认为空
-        std::string action = req.value("action", "");
-        
-        // 检查是否存在对应的处理器
-        if (handlers_.count(action)) {
-            return handlers_[action]->handle(Session, req);
+        if (handlers_.count(type)) {
+            return handlers_[type]->handle(Session, req, req_len);
         }
-
-        // 异常处理：未知的指令请求
-        LOG_ERROR("未知的action:" + action);
-        return {
-            {"status", "false"}, 
-            {"msg", "未知的 action: " + action}
-        };
+        LOG_ERROR("未知的 msgType");
+        return "";
     }
 };
 

@@ -37,7 +37,7 @@ public:
      * @param username 目标用户名
      * @return double 当前余额。若查询出错返回 -1.0。
      */
-    double getBalance(const std::string& username) override;
+    int64_t getBalance(const std::string& username) override;
 
     /**
      * @brief 增加用户余额（充值或卖出获利）
@@ -49,7 +49,7 @@ public:
      * 
      * @note 采用原子 SQL：`SET balance = balance + ?`，防止并发冲抵导致的坏账。
      */
-    bool updateBalance(const std::string& username, double amount) override;
+    bool updateBalance(const std::string& username, int64_t amount) override;
 
     /**
      * @brief 扣减用户余额（买入扣款）
@@ -63,7 +63,9 @@ public:
      * 
      * @note 关键 SQL：`WHERE balance >= ?` 确保账户不会透支。
      */
-    bool deductBalance(const std::string& username, double amount) override;
+    bool deductBalance(const std::string& username, int64_t amount) override;
+
+    uint64_t getUserId(const std::string& username) override;
 };
 
 #endif

@@ -38,7 +38,7 @@ public:
      * @param username 用户名
      * @return double 账户余额；若查询失败或用户不存在通常返回 -1.0 或 0.0
      */
-    virtual double getBalance(const std::string& username) = 0;
+    virtual int64_t getBalance(const std::string& username) = 0;
     /**
      * @brief 原子化增加用户余额（充值/卖出获利）
      * 
@@ -48,7 +48,7 @@ public:
      * @return false 数据库操作失败
      * @note 内部应使用 `UPDATE accounts SET balance = balance + ?` 确保并发安全。
      */
-    virtual bool updateBalance(const std::string& username, double amount) = 0;
+    virtual bool updateBalance(const std::string& username, int64_t amount) = 0;
     /**
      * @brief 原子化扣减用户余额（买入扣费）
      * 
@@ -58,7 +58,9 @@ public:
      * @return false 扣减失败（通常是余额不足或并发冲突）
      * @note 必须包含 `WHERE balance >= amount` 的约束条件防止账户出现负值。
      */
-    virtual bool deductBalance(const std::string& username, double amount) = 0;
+    virtual bool deductBalance(const std::string& username, int64_t amount) = 0;
+
+    virtual uint64_t getUserId(const std::string& username) = 0;
 };
 
 /**

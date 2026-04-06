@@ -5,7 +5,8 @@
 #include <queue>
 #include <thread>
 #include <mutex>
-#include <condition_variable>
+#include <atomic>
+#include "blockingconcurrentqueue.h"
 #include <functional>
 
 /**
@@ -15,6 +16,11 @@
  * 内部采用“生产者-消费者”模型，配合互斥锁与条件变量实现高效的任务分发。
  */
 class ThreadPool {
+private:
+    std::vector<std::thread> workers_;
+    moodycamel::BlockingConcurrentQueue<std::function<void()>> tasks_;
+    std::atomic<bool> running_;
+
 public:
     /**
      * @brief 构造函数：初始化线程池并启动工作线程
@@ -25,26 +31,21 @@ public:
      * 每个工作线程在初始化后都会进入一个无限循环，尝试从任务队列中提取并执行任务。
      * 如果队列为空，线程将通过条件变量挂起，不消耗 CPU 周期。
      */
-    ThreadPool(int numThreads) : stop(false) {
+    ThreadPool(int numThreads) : running_(true) {
         for (int i = 0; i < numThreads; ++i) {
-            workers.emplace_back([this] {
+            workers_.emplace_back([this] {
                 while (true) {
                     std::function<void()> task;
-                    {
-                        // 获取互斥锁，准备从队列中提取任务
-                        std::unique_lock<std::mutex> lock(mtx);
-                        // 等待条件变量：当池停止或队列不为空时被唤醒
-                        cv.wait(lock, [this] { return stop || !tasks.empty(); });
-                        
-                        // 如果池已停止且任务已排空，则线程安全退出
-                        if (stop && tasks.empty()) return;
-                        
-                        // 提取队列首部的任务（移动语义减少拷贝）
-                        task = std::move(tasks.front());
-                        tasks.pop();
+                    
+                    tasks_.wait_dequeue(task);
+
+                    if (!running_ && !task) {
+                        return;
                     }
-                    // 在锁范围外执行任务，提升并发度
-                    task(); 
+
+                    if (task) {
+                        task();
+                    }
                 } 
             });
         }
@@ -60,11 +61,7 @@ public:
      * 2. 提交后会自动通过 `cv.notify_one()` 唤醒一个正在睡眠的工作线程。
      */
     void enqueue(std::function<void()> task) {
-        {
-            std::lock_guard<std::mutex> lock(mtx);
-            tasks.emplace(std::move(task));
-        }
-        cv.notify_one();
+        tasks_.enqueue(std::move(task));
     }
 
     /**
@@ -76,22 +73,15 @@ public:
      * 3. 阻塞等待所有线程执行完当前任务并退出 (`join`)。
      */
     ~ThreadPool() {
-        { 
-            std::lock_guard<std::mutex> lock(mtx); 
-            stop = true; 
+        running_ = false;
+        for (size_t i = 0; i < workers_.size(); i++) {
+            tasks_.enqueue(nullptr);
         }
-        cv.notify_all();
-        for (std::thread &worker : workers) {
-            worker.join();
+
+        for (std::thread &workers_ : workers_) {
+            if (workers_.joinable()) workers_.join();
         }
     }
-
-private:
-    std::vector<std::thread> workers;       /**< 工作线程容器 */
-    std::queue<std::function<void()>> tasks; /**< 待处理任务队列 */
-    std::mutex mtx;                         /**< 保护任务队列的互斥锁 */
-    std::condition_variable cv;             /**< 用于线程同步的条件变量 */
-    bool stop;                              /**< 线程池停止标志位 */
 };
 
 #endif
