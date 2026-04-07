@@ -65,7 +65,7 @@ private:
         auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(item.timestamp.time_since_epoch()) % 1000;
 
         struct tm timeinfo; 
-        localtime_r(&ti, &timeinfo); 
+        localtime_r(&ti, &timeinfo);
 
         std::stringstream ss;
         ss << std::put_time(&timeinfo, "%Y-%m-%d %H:%M:%S") 
@@ -73,7 +73,7 @@ private:
         << " " << level_str << " " << item.msg << "\n";
 
         std::string final_msg = ss.str();
-        std::cout << final_msg << std::endl;
+        std::cout << final_msg;
 
         if (fileStream_.is_open()) {
             fileStream_ << final_msg;
