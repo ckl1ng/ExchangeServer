@@ -71,7 +71,6 @@ void TcpServer::acceptConnection() {
         setsockopt(client_sock, IPPROTO_TCP, TCP_NODELAY, &opt, sizeof(opt));
         SessionManager::getInstance().createSession(client_sock);
 
-        // 【关键修复】仅对客户端连接启用 EPOLLONESHOT
         addEvent(client_sock, EPOLLIN | EPOLLET | EPOLLONESHOT);
         timerMgr_.addTimer(client_sock, 60); 
     }
@@ -85,6 +84,7 @@ void TcpServer::start() {
             int fd = events_[i].data.fd;
 
             if (fd == listenFd_) {
+                LOG_INFO("新的连接");
                 acceptConnection();
             } else {
                 timerMgr_.addTimer(fd, 60);

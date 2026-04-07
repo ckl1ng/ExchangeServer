@@ -53,30 +53,31 @@ private:
     }
 
     void writeToSink(const LogItem& item) {
-        // std::string level_str;
-        // switch (item.level) {
-        //     case LogLevel::DEBUG: level_str = "[DEBUG]"; break;
-        //     case LogLevel::INFO:  level_str = "[INFO ]"; break;
-        //     case LogLevel::WARN:  level_str = "[WARN ]"; break;
-        //     case LogLevel::ERROR: level_str = "[ERROR]"; break;
-        // }
+        std::string level_str;
+        switch (item.level) {
+            case LogLevel::DEBUG: level_str = "[DEBUG]"; break;
+            case LogLevel::INFO:  level_str = "[INFO ]"; break;
+            case LogLevel::WARN:  level_str = "[WARN ]"; break;
+            case LogLevel::ERROR: level_str = "[ERROR]"; break;
+        }
 
-        // auto ti = std::chrono::system_clock::to_time_t(item.timestamp);
-        // auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(item.timestamp.time_since_epoch()) % 1000;
+        auto ti = std::chrono::system_clock::to_time_t(item.timestamp);
+        auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(item.timestamp.time_since_epoch()) % 1000;
 
-        // struct tm timeinfo; 
-        // localtime_r(&ti, &timeinfo); 
+        struct tm timeinfo; 
+        localtime_r(&ti, &timeinfo); 
 
-        // std::stringstream ss;
-        // ss << std::put_time(&timeinfo, "%Y-%m-%d %H:%M:%S") 
-        // << "." << std::setfill('0') << std::setw(3) << ms.count()
-        // << " " << level_str << " " << item.msg << "\n";
+        std::stringstream ss;
+        ss << std::put_time(&timeinfo, "%Y-%m-%d %H:%M:%S") 
+        << "." << std::setfill('0') << std::setw(3) << ms.count()
+        << " " << level_str << " " << item.msg << "\n";
 
-        // std::string final_msg = ss.str();
+        std::string final_msg = ss.str();
+        std::cout << final_msg << std::endl;
 
-        // if (fileStream_.is_open()) {
-        //     fileStream_ << final_msg;
-        // }
+        if (fileStream_.is_open()) {
+            fileStream_ << final_msg;
+        }
     }
 
 public:
