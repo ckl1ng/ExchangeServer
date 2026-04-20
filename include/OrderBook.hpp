@@ -42,6 +42,7 @@ private:
                     trade_qty,
                     static_cast<uint64_t>(std::chrono::system_clock::now().time_since_epoch().count())
                 });
+                
                 buy_order->quantity -= trade_qty;
                 ask_order->quantity -= trade_qty;
 
@@ -78,7 +79,7 @@ private:
                     bid_order->user_id,
                     sell_order->user_id,
                     bid_order->price,
-                    bids_price, 
+                    bids_price,
                     trade_qty,
                     static_cast<uint64_t>(std::chrono::system_clock::now().time_since_epoch().count())
                 });
@@ -99,7 +100,7 @@ private:
     }
 
 public:
-    explicit OrderBook(uint32_t ticker_id) : ticker_id_(ticker_id) {}
+    explicit OrderBook(uint32_t ticker_id) : ticker_id_(ticker_id) {}   
 
     void processOrder(std::shared_ptr<Order> new_order, std::vector<MatchRecord>& results) {
         if (new_order->side == OrderSide::BUY) {

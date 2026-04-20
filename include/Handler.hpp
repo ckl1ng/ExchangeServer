@@ -231,10 +231,7 @@ public:
 /**
  * @class TradeHandler
  * @brief 买卖交易执行处理器
- * @details 
- * 1. 验证登录。
- * 2. 预扣除资产（买入扣钱，卖出扣股票）以防止超卖/透支。
- * 3. 调用撮合引擎进行订单匹配。
+ * @details 根据订单类型冻结相应的资金或股票，并将订单信息追加到 WALManager 以供撮合引擎异步处理。
  */
 class TradeHandler : public IHandler {
 private:
@@ -511,13 +508,8 @@ public:
 /**
  * @class CancelOrderHandler
  * @brief 订单撤销处理器
- * 
- * 负责处理用户的撤单请求，内置金融级的高并发防作弊机制与安全性校验：
- * - 越权拦截 (Auth Check): 解析 order_id 提取挂单用户名，严格比对当前 Session 用户。
- * - 防价格欺诈 (Anti-Fraud): 通过 Redis ZSCORE 实时查询订单真实价格，杜绝退款漏洞。
- * - 并发防刷 (Concurrency Safe): 利用 Redis ZREM 命令的原子性判断撤单与成交的竞争。
- * - 资产回退 (Asset Rollback): 撤单成功后原子化退回冻结的现金或股票。
- */
+ * @details 向 WALManager 追加撤单记录，由撮合引擎异步处理撤单逻辑。
+ */ 
 class CancelOrderHandler : public IHandler {
 private:
     std::shared_ptr<WALManager> wal_;

@@ -4,6 +4,7 @@
 #include <cstring>
 #include <iostream>
 
+// 用户仓库实现类，负责用户相关的数据库操作
 bool UserRepositoryImpl::registerUser(const std::string& username, const std::string& password) {
     auto conn_ptr = DBPool::getInstance().getConnection();
     MYSQL* conn = conn_ptr.get();
@@ -45,6 +46,7 @@ bool UserRepositoryImpl::registerUser(const std::string& username, const std::st
     return success;
 }
 
+// 校验用户登录凭证
 bool UserRepositoryImpl::checkLogin(const std::string& username, const std::string& password) {
     auto conn_ptr = DBPool::getInstance().getConnection();
     MYSQL* conn = conn_ptr.get();
@@ -79,6 +81,7 @@ bool UserRepositoryImpl::checkLogin(const std::string& username, const std::stri
     return exists;
 }
 
+// 获取用户余额
 int64_t UserRepositoryImpl::getBalance(const std::string& username) {
     auto conn_ptr = DBPool::getInstance().getConnection();
     MYSQL* conn = conn_ptr.get();
@@ -127,6 +130,7 @@ int64_t UserRepositoryImpl::getBalance(const std::string& username) {
     return final_balance;
 }
 
+// 原子化增加用户余额（充值/卖出获利）
 bool UserRepositoryImpl::updateBalance(const std::string& username, int64_t amount) {
     auto conn_ptr = DBPool::getInstance().getConnection();
     MYSQL* conn = conn_ptr.get();
@@ -155,6 +159,7 @@ bool UserRepositoryImpl::updateBalance(const std::string& username, int64_t amou
     return success;
 }
 
+// 原子化扣减用户余额（买入扣费）
 bool UserRepositoryImpl::deductBalance(const std::string& username, int64_t amount) {
     auto conn_ptr = DBPool::getInstance().getConnection();
     MYSQL* conn = conn_ptr.get();
@@ -193,6 +198,7 @@ bool UserRepositoryImpl::deductBalance(const std::string& username, int64_t amou
     return affected_rows > 0;
 }
 
+// 获取用户 ID
 uint64_t UserRepositoryImpl::getUserId(const std::string& username) {
     auto conn_ptr = DBPool::getInstance().getConnection();
     MYSQL* conn = conn_ptr.get();

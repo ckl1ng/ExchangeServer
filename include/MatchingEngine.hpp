@@ -12,6 +12,7 @@
 #include <string>
 #include <algorithm>
 
+// 主撮合引擎类，负责管理多个股票的订单簿处理器和清算处理器
 class MatchingEngine {
 private:
     std::unordered_map<uint32_t, std::unique_ptr<OrderBookProcessor>> order_books_;

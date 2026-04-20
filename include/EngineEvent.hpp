@@ -6,6 +6,7 @@
 
 enum class EventType { NEW_ORDER,CANCEL_ORDER };
 
+// 撮合引擎事件结构体
 struct EngineEvent {
     EventType type;
     std::shared_ptr<Order> order;        // 下单时使用

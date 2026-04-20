@@ -26,7 +26,7 @@ void TcpServer::initSocket() {
     setsockopt(listenFd_, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
 
     setsockopt(listenFd_, IPPROTO_TCP, TCP_NODELAY, &opt, sizeof(opt));
-
+    
     sockaddr_in addr;
     memset(&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET;
@@ -37,7 +37,6 @@ void TcpServer::initSocket() {
         LOG_ERROR("端口绑定失败: " + std::to_string(port_));
         exit(EXIT_FAILURE);
     }
-    
     
     listen(listenFd_, 4096); 
     setNonBlocking(listenFd_);
@@ -57,6 +56,7 @@ void TcpServer::addEvent(int fd, uint32_t events) {
 
 void TcpServer::acceptConnection() {
     while (true) {
+
         sockaddr_in client_addr;
         socklen_t len = sizeof(client_addr);
         int client_sock = accept(listenFd_, (struct sockaddr*)&client_addr, &len);

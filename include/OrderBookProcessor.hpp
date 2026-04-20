@@ -10,6 +10,7 @@
 #include <atomic>
 #include <vector>
 
+// 订单簿处理器类，负责处理单只股票的订单簿逻辑，包括订单匹配、撤单和发布撮合结果
 class OrderBookProcessor {
 private:
     uint32_t ticker_id_;
@@ -21,6 +22,7 @@ private:
 
     std::shared_ptr<SettlementProcessor> settlementProcessor_;
 
+    // 后台线程函数：持续从队列中取出事件并处理订单簿逻辑
     void processLoop() {
         const size_t batch_size = 1000;
         EngineEvent buffer[batch_size];
@@ -74,14 +76,17 @@ public:
         if (worker_thread_.joinable()) worker_thread_.join();
     }
 
+    // 外部调用此函数将事件推送到队列中
     void enqueue(const EngineEvent& ev) {
         queue_.enqueue(ev);
     }
 
+    // 获取当前的最佳买价和卖价
     void getBestBidOffer(int64_t& bid, int64_t& ask) {
         book_.getBestBidOffer(bid, ask);
     }
 
+    // 获取用户在该股票的所有活跃订单
     std::vector<std::shared_ptr<Order>> getUserOrder(uint64_t uid) {
         return book_.getUserActiveOrder(uid);
     }

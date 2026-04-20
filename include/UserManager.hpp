@@ -47,14 +47,17 @@ private:
 
     UserManager() = default;
 
+    // 根据 UID 计算分段索引
     size_t IdToMtx(uint64_t uid) {
         return uid % mtx_count;
     }
 
+    // 根据 Username 计算分段索引
     size_t nameToMtx(const std::string& username) {
         return std::hash<std::string>{}(username) % mtx_count;
     }
 
+    // 获取账户指针，内部使用读锁，允许多线程并发读取
     UserAccount* getAccount(uint64_t uid) {
         size_t idx = IdToMtx(uid);
         std::shared_lock<std::shared_mutex> lock(mtx_[idx].mtx); // 使用读锁，允许多线程并发读取
@@ -69,6 +72,7 @@ public:
         return instance;
     }
 
+    // 禁止复制和移动构造函数
     void loadAllFromDB() {
         auto conn_ptr = DBPool::getInstance().getConnection();
         MYSQL* conn = conn_ptr.get();
@@ -126,6 +130,7 @@ public:
         LOG_INFO("UserManager 内存预热完成，共加载 " + std::to_string(mtx_count) + " 分段的账户及资产记录");
     }
 
+    // 创建用户账户，初始余额为 0，持仓为空
     void createUserAccount(uint64_t uid, const std::string& username) {
         size_t idx = IdToMtx(uid);
         std::unique_lock<std::shared_mutex> lock(mtx_[idx].mtx);
@@ -138,6 +143,7 @@ public:
         }
     }
 
+    // 根据用户名获取对应的 UID
     uint64_t getId(const std::string& username) {
         for (size_t i = 0; i < mtx_count; ++i) {
             std::shared_lock<std::shared_mutex> lock(mtx_[i].mtx);
@@ -149,6 +155,7 @@ public:
         return 0;
     }
 
+    // 根据 UID 获取对应的用户名
     std::string getName(uint64_t uid) {
         size_t idx = IdToMtx(uid);
         std::shared_lock<std::shared_mutex> lock(mtx_[idx].mtx);
@@ -156,6 +163,7 @@ public:
         return it != mtx_[idx].account_.end() ? it->second->username : "UNKNOWN";
     }
 
+    // ================== 资产冻结尝试 (Try) ==================
     bool tryFreezeBalance(uint64_t uid, int64_t amount) {
         UserAccount* acc = getAccount(uid);
         if (!acc) return false;
@@ -168,6 +176,7 @@ public:
         return false;
     }
 
+    // 尝试冻结股票，成功返回 true，失败返回 false
     bool tryFreezeStock(uint64_t uid, uint32_t ticker_id, int qty) {
         UserAccount* acc = getAccount(uid);
         if (!acc) return false;
@@ -190,6 +199,7 @@ public:
         acc->available_stock[ticker_id] += qty;
     }
 
+    // 卖出确认，解冻股票，增加可用余额
     void commitSell(uint64_t uid, uint32_t ticker_id, int64_t revenue, int qty) {
         UserAccount* acc = getAccount(uid);
         if (!acc) return;
@@ -207,6 +217,7 @@ public:
         acc->available_balance += amount;
     }
 
+    // 撤回卖单，解冻股票
     void unfreezeStock(uint64_t uid, uint32_t ticker_id, int qty) {
         UserAccount* acc = getAccount(uid);
         if (!acc) return;
@@ -223,6 +234,7 @@ public:
         acc->available_balance += amount;
     }
 
+    // 获取用户当前可用余额
     int64_t getBalance(uint64_t uid) {
         UserAccount* acc = getAccount(uid);
         if (!acc) return 0;
@@ -230,6 +242,7 @@ public:
         return acc->available_balance;
     }
 
+    // 获取用户当前持仓列表
     std::unordered_map<uint32_t, int> getHoldings(uint64_t uid) {
         UserAccount* acc = getAccount(uid);
         if (!acc) return {};

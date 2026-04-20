@@ -7,6 +7,7 @@
 enum class OrderSide { BUY, SELL };
 constexpr int64_t PRICE_SCALE = 10000;
 
+// 订单结构体定义
 struct Order {
     uint64_t order_id;
     uint32_t ticker_id;
@@ -18,6 +19,7 @@ struct Order {
     uint64_t timestamp;
 };
 
+// 成交记录结构体定义
 struct MatchRecord {
     uint32_t ticker_id;
     uint64_t maker_order_id;
@@ -32,6 +34,7 @@ struct MatchRecord {
     uint64_t timestamp;
 };
 
+// 撤单记录结构体定义
 struct CancelRecord {
     uint32_t ticker_id;
     uint64_t order_id;

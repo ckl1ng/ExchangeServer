@@ -11,6 +11,7 @@
 #include <vector>
 #include <memory>
 
+// 负责处理撮合结果的清算逻辑，更新用户余额和持仓
 class SettlementProcessor {
 private:
     moodycamel::ConcurrentQueue<MatchRecord> queue_;
@@ -21,6 +22,7 @@ private:
     std::shared_ptr<IUserRepository> userRepo_;
     std::shared_ptr<IStockRepository> stockRepo_;
 
+    // 后台线程函数：持续处理撮合结果和撤单记录，更新用户账户信息
     void processLoop() {
         const size_t batch_size = 1000;
         MatchRecord buffer[batch_size];
@@ -41,9 +43,9 @@ private:
 
                     int64_t refund_money = (rec.buyer_expected_price - rec.match_price) * rec.match_quantity;
 
-                    userRepo_->deductBalance(buyer_name, sell_money);           
-                    stockRepo_->updateStockHolding(buyer_name, symbol, rec.match_quantity); 
-                    userRepo_->updateBalance(seller_name, sell_money);          
+                    userRepo_->deductBalance(buyer_name, sell_money);
+                    stockRepo_->updateStockHolding(buyer_name, symbol, rec.match_quantity);
+                    userRepo_->updateBalance(seller_name, sell_money);
                     stockRepo_->deductStockHolding(seller_name, symbol, rec.match_quantity);
 
                     UserManager::getInstance().commitBuy(rec.buyer_user_id, rec.ticker_id, sell_money, rec.match_quantity, refund_money);

@@ -4,6 +4,8 @@
 #include <chrono>
 #include <atomic>
 
+
+// 订单ID生成器，基于Twitter的Snowflake算法设计，保证分布式环境下的唯一性和高性能
 class OrderIdGenerator {
 private:
     static constexpr uint64_t EPOCH = 1767225600000ULL;
@@ -25,11 +27,11 @@ public:
         return instance;
     }
 
+    // 生成唯一订单ID，包含时间戳、节点ID和序列号
     uint64_t generate() {
         uint64_t timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
                    std::chrono::system_clock::now().time_since_epoch()).count();
         
-        // 无锁递增，极大提升并发吞吐量
         uint32_t seq = sequence_.fetch_add(1, std::memory_order_relaxed);
         
         return ((timestamp - EPOCH) << TIMESTAMP_SHIFT) |

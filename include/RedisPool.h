@@ -13,9 +13,7 @@
 using RedisReplyPtr = std::unique_ptr<redisReply, std::function<void(redisReply*)>>;
 
 
-/**
- * @brief创建一个管理reply的指针
- */
+// 连接池管理类，提供线程安全的 Redis 连接获取和归还功能
 inline RedisReplyPtr make_reply(void* r) {
     return RedisReplyPtr(static_cast<redisReply*>(r), [](redisReply* reply) {
         if (reply) {
@@ -42,26 +40,13 @@ public:
         return instance;
     }
 
-    /**
-     * @brief 清理所有连接资源
-     */
+    // 禁止复制和赋值
     ~RedisPool();
 
-    /**
-     * @brief 执行物理连接创建并压入队列
-     * 
-     * @details 
-     * 包含身份验证逻辑。若某个连接创建失败，会跳过该连接并记录错误日志。
-     */
+    // 初始化连接池，创建指定数量的 Redis 连接并加入连接队列
     void init(const std::string& host, int port, const std::string& password, int maxSize);
     
-    /**
-     * @brief 获取连接并配置自动归还的 Deleter
-     * 
-     * @note 
-     * 这里的核心逻辑是 unique_ptr 的销毁器，它不执行 redisFree，
-     * 而是执行 connQueue_.push(c) 并通知条件变量。
-     */
+    // 获取 Redis 连接：从连接队列中取出一个连接，如果没有可用连接则等待
     std::unique_ptr<redisContext, std::function<void(redisContext*)>> getConnection();
 };
 

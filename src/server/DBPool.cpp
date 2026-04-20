@@ -1,13 +1,3 @@
-/**
- * @file DBPool.cpp
- * @brief MySQL 数据库连接池的具体实现 (MySQL Connection Pool Implementation)
- * 
- * 该模块实现了高性能的数据库连接管理逻辑：
- * 1. 预创建连接：初始化时建立指定数量的长连接，减少业务触发时的握手开销。
- * 2. 线程安全调度：通过条件变量 (Condition Variable) 实现多线程竞争连接时的排队与唤醒。
- * 3. 自动归还机制：利用 std::unique_ptr 的自定义销毁器，实现连接的自动回收复用。
- */
-
 #include "DBPool.h"
 #include <mysql/mysql.h>
 #include <queue>
@@ -29,6 +19,7 @@ DBPool::~DBPool() {
     }
 }
 
+// 初始化数据库连接池
 void DBPool::init(const std::string& host, const std::string& user, const std::string&password, const std::string& db, int maxSize) {
     host_ = host; user_ = user; pwd_ = password; db_ = db;
 
@@ -44,6 +35,7 @@ void DBPool::init(const std::string& host, const std::string& user, const std::s
     LOG_INFO("数据库连接池初始化完成, 可用连接数: " + std::to_string(connQueue_.size()));
 }
 
+// 获取数据库连接，使用 unique_ptr 管理连接生命周期
 std::unique_ptr<MYSQL, std::function<void(MYSQL*)>> DBPool::getConnection() {
     std::unique_lock<std::mutex> lock(mtx_);
     

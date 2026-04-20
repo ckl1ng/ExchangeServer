@@ -16,12 +16,8 @@
 #include <cstring>
 
 /**
- * @brief 客户端会话状态管理器 (Client Session Manager)
- * 
- * 维护全局 TCP 客户端连接的状态与独立缓冲区，是实现有状态协议的关键：
- * - sessions_: 线程安全的映射表，通过 FD 索引对应的 Session 对象。
- * - getOrCreateSession: 采用懒加载模式，确保每个连接都有独立的协议解析缓冲区。
- * - mtx_: 互斥锁保护，支持在高并发接入/断开时维护映射表的一致性。
+ * @class SessionManager
+ * @brief 会话管理器，负责维护 TCP 连接与用户状态的映射
  */
 class SessionManager {
 private:
@@ -32,11 +28,8 @@ private:
     SessionManager() = default;
 
 public:
-    /**
-     * @brief 获取或创建会话对象
-     * @param fd 客户端套接字
-     * @return std::shared_ptr<Session> 会话对象的智能指针
-     */
+
+    // 获取单例实例
     static SessionManager& getInstance(){
         static SessionManager instance;
         return instance;
@@ -56,10 +49,7 @@ public:
         return sessions_[fd].load(std::memory_order_acquire);
     }
 
-    /**
-     * @brief 移除会话记录
-     * @param fd 客户端套接字
-     */
+    // 在连接断开时调用（写锁）
     void removeSession(int fd) {
         if (fd < MAX_FD) {
             Session* s = sessions_[fd].exchange(nullptr, std::memory_order_acq_rel);

@@ -27,7 +27,7 @@ struct WALRecord {
 
 class WALManager {
 private:
-    moodycamel::BlockingConcurrentQueue<EngineEvent> queue_; // 替换为 Blocking 队列
+    moodycamel::BlockingConcurrentQueue<EngineEvent> queue_;
     std::thread worker_;
     std::atomic<bool> running_ {true};
     std::shared_ptr<MatchingEngine> engine_;

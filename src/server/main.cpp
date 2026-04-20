@@ -22,23 +22,6 @@
 
 Router g_router; //全局业务路由器实例，负责 Action -> Handler 的映射
 
-/**
- * @brief 核心业务处理回调 (Reactor Business Callback)
- * 
- * 该函数是网络层与业务层的粘合剂，处理了最核心的 TCP 协议解析逻辑。
- * 
- * @param client_fd 触发可读事件的套接字
- * @return true 保持连接（长连接）；false 出错或断开，要求底层关闭 FD
- * 
- * @details 
- * 核心流程包括：
- * 1. **非阻塞循环读取**：配合 Epoll ET 模式，读光内核缓冲区。
- * 2. **协议拆包 (Unpacking)**：识别包头解决粘包与半包问题。
- * 3. **二进制路由**：解析指令并通过 g_router 分发至具体业务处理器。
- * 4. **可靠发送**：循环调用 send 确保大数据量的响应包完整发出。
- * 
- * @note 内部通过 `session->mtx` 保证了同一连接在多线程环境下的时序安全。
- */
 bool MyEchoBusiness(int client_fd) {
     auto session = SessionManager::getInstance().getSession(client_fd);
     if (!session) return false; 
@@ -85,7 +68,7 @@ bool MyEchoBusiness(int client_fd) {
         std::string reply = "";
         try {
             // 路由派发
-            reply = g_router.dispatch(session, header.type, payload, header.length);
+            reply = Router::getInstance().dispatch(session, header.type, payload, header.length);
             // LOG_INFO("收到消息: " + std::to_string(client_fd) + " 类型: " + std::to_string(raw_type));
         } catch (const std::exception& e) {
             LOG_ERROR("处理请求异常: " + std::string(e.what()));
@@ -128,19 +111,6 @@ bool MyEchoBusiness(int client_fd) {
     return true;
 }
 
-/**
- * @brief 程序入口：系统环境初始化与服务启动
- * 
- * @return int 退出状态码
- * 
- * @details 
- * 初始化序列：
- * 1. 日志系统初始化。
- * 2. 数据库连接池 (MySQL/Redis) 初始化。
- * 3. 仓储层 (Repository) 与 业务引擎 (Matching Engine) 实例化。
- * 4. 路由注册：定义系统支持的所有 API 接口。
- * 5. 启动网络服务器：监听 12345 端口，配置 4 个工作线程。
- */
 int main() {
     // 初始化日志
     Logger::getInstance().init("server.log");
@@ -167,19 +137,19 @@ int main() {
     std::shared_ptr<WALManager> wal = std::make_shared<WALManager>(engine);
 
     // --- 路由注册表 ---
-    g_router.registerHandler(MsgType::LOGIN_REQ,     std::make_shared<LoginHandler>(userRepo));
-    g_router.registerHandler(MsgType::REGISTER_REQ,  std::make_shared<RegisterUserHandler>(userRepo));
-    g_router.registerHandler(MsgType::LOGOUT_REQ,    std::make_shared<ExitHandler>(userRepo));
-    g_router.registerHandler(MsgType::BALANCE_REQ,   std::make_shared<GetBalanceHandler>());
-    g_router.registerHandler(MsgType::DEPOSIT_REQ,   std::make_shared<DepositHandler>(userRepo));
-    g_router.registerHandler(MsgType::TRADE_REQ,     std::make_shared<TradeHandler>(wal));
-    g_router.registerHandler(MsgType::HOLDINGS_REQ,  std::make_shared<GetHoldingsHandler>(stockRepo));
-    g_router.registerHandler(MsgType::MARKET_REQ,    std::make_shared<GetMarketHandler>(engine));
-    g_router.registerHandler(MsgType::NEWS_REQ,      std::make_shared<GetNewsHandler>());
-    g_router.registerHandler(MsgType::TREND_REQ,     std::make_shared<GetTrendHandler>());
-    g_router.registerHandler(MsgType::ORDERS_REQ,    std::make_shared<GetOrdersHandler>(engine));
-    g_router.registerHandler(MsgType::CANCEL_REQ,    std::make_shared<CancelOrderHandler>(wal));
-    g_router.registerHandler(MsgType::ALL_STOCKS_REQ,std::make_shared<GetAllStocksHandler>(stockRepo));
+    g_router.registerHandler(MsgType::LOGIN_REQ,      std::make_shared<LoginHandler>(userRepo));
+    g_router.registerHandler(MsgType::REGISTER_REQ,   std::make_shared<RegisterUserHandler>(userRepo));
+    g_router.registerHandler(MsgType::LOGOUT_REQ,     std::make_shared<ExitHandler>(userRepo));
+    g_router.registerHandler(MsgType::BALANCE_REQ,    std::make_shared<GetBalanceHandler>());
+    g_router.registerHandler(MsgType::DEPOSIT_REQ,    std::make_shared<DepositHandler>(userRepo));
+    g_router.registerHandler(MsgType::TRADE_REQ,      std::make_shared<TradeHandler>(wal));
+    g_router.registerHandler(MsgType::HOLDINGS_REQ,   std::make_shared<GetHoldingsHandler>(stockRepo));
+    g_router.registerHandler(MsgType::MARKET_REQ,     std::make_shared<GetMarketHandler>(engine));
+    g_router.registerHandler(MsgType::NEWS_REQ,       std::make_shared<GetNewsHandler>());
+    g_router.registerHandler(MsgType::TREND_REQ,      std::make_shared<GetTrendHandler>());
+    g_router.registerHandler(MsgType::ORDERS_REQ,     std::make_shared<GetOrdersHandler>(engine));
+    g_router.registerHandler(MsgType::CANCEL_REQ,     std::make_shared<CancelOrderHandler>(wal));
+    g_router.registerHandler(MsgType::ALL_STOCKS_REQ, std::make_shared<GetAllStocksHandler>(stockRepo));
     // 启动网络引擎
     TcpServer server(12345, 24);
     server.setBusinessCallback(MyEchoBusiness);

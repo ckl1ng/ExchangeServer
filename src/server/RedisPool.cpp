@@ -1,13 +1,3 @@
-/**
- * @file RedisPool.cpp
- * @brief Redis 连接池调度与管理逻辑实现 (Redis Connection Pool Implementation)
- * 
- * 该模块提供了高性能的 Redis 资源调度方案：
- * 1. 线程同步：利用 std::condition_variable 实现生产-消费者模型的连接借出。
- * 2. 身份验证：内置自动 AUTH 认证逻辑。
- * 3. 资源复用：采用独创的智能指针销毁器劫持技术，实现零开销的连接回收。
- */
-
 #include "RedisPool.h"
 #include "Logger.hpp"
 #include <iostream>
@@ -23,6 +13,7 @@ RedisPool::~RedisPool() {
     } 
 }
 
+// 初始化 Redis 连接池
 void RedisPool::init(const std::string& host, int port, const std::string& password, int maxSize) {
     host_ = host;
     port_ = port;
@@ -59,6 +50,7 @@ void RedisPool::init(const std::string& host, int port, const std::string& passw
     LOG_INFO("Redis连接池初始化完成, 可用连接数： " + std::to_string(connQueue_.size()));
 }
 
+// 获取 Redis 连接，使用 unique_ptr 管理连接生命周期
 std::unique_ptr<redisContext, std::function<void(redisContext*)>> RedisPool::getConnection(){
     std::unique_lock<std::mutex> lock(mtx_);
     

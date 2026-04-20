@@ -2,6 +2,7 @@
 #include "DBPool.h"
 #include "Logger.hpp"
 
+// 获取用户持仓数量
 int StockRepositoryImpl::getStockHolding(const std::string& username, const std::string& symbol) {
     auto conn_ptr = DBPool::getInstance().getConnection();
     MYSQL* conn = conn_ptr.get();
@@ -58,6 +59,7 @@ int StockRepositoryImpl::getStockHolding(const std::string& username, const std:
     return final_quantity;
 }
 
+//  原子化更新持仓数量（增加/减少）
 bool StockRepositoryImpl::updateStockHolding(const std::string& username, const std::string& symbol, int delta) {
     auto conn_ptr = DBPool::getInstance().getConnection();
     MYSQL* conn = conn_ptr.get();
@@ -94,6 +96,7 @@ bool StockRepositoryImpl::updateStockHolding(const std::string& username, const 
     return success;
 }
 
+// 获取用户名下的所有股票持仓列表
 nlohmann::json StockRepositoryImpl::getAllHoldings(const std::string& username) {
     auto conn_ptr = DBPool::getInstance().getConnection();
     std::string sql = "SELECT symbol, quantity FROM holdings WHERE username = '" + username + "'";
@@ -113,6 +116,7 @@ nlohmann::json StockRepositoryImpl::getAllHoldings(const std::string& username) 
     return h_json;
 }
 
+// 获取系统中所有被持有的股票代码列表
 std::vector<std::string> StockRepositoryImpl::getAllStocks() {
     auto conn_ptr = DBPool::getInstance().getConnection();
     MYSQL* conn = conn_ptr.get();
@@ -138,6 +142,7 @@ std::vector<std::string> StockRepositoryImpl::getAllStocks() {
     return symbols;
 }
 
+//  原子化扣减持仓数量（卖出前校验）
 bool StockRepositoryImpl::deductStockHolding(const std::string& username, const std::string& symbol, int amount) {
     auto conn_ptr = DBPool::getInstance().getConnection();
     MYSQL* conn = conn_ptr.get();

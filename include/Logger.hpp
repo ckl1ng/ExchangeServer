@@ -12,8 +12,10 @@
 #include <iomanip>
 #include <thread>
 
+// 线程安全的日志系统，支持异步写入和日志级别控制
 enum class LogLevel { DEBUG, INFO, WARN, ERROR };
 
+// 日志项结构体，包含日志级别、消息内容和时间戳
 struct LogItem {
     LogLevel level;
     std::string msg;
@@ -23,6 +25,7 @@ struct LogItem {
     LogItem(LogLevel l, std::string m) : level(l), msg(std::move(m)), timestamp(std::chrono::system_clock::now()) {}
 };
 
+// Logger 类：单例模式实现，提供线程安全的日志记录功能
 class Logger {
 private:
     std::ofstream fileStream_;
@@ -33,6 +36,7 @@ private:
     Logger(const Logger&) = delete;
     Logger& operator=(const Logger&) = delete;
     
+    // 后台线程函数：持续从队列中取出日志项并写入输出流
     void processLogs() {
         const size_t batch_size = 500;
         LogItem items[batch_size];
@@ -52,6 +56,7 @@ private:
         }
     }
 
+    // 将日志项格式化并写入标准输出和文件流
     void writeToSink(const LogItem& item) {
         std::string level_str;
         switch (item.level) {
@@ -101,19 +106,9 @@ public:
     }
 
     /**
-     * @brief 核心日志写入接口
-     * 
-     * 将格式化的日志行同步写入标准输出流及本地文件流。
-     * 
-     * @param level 日志等级
-     * @param msg   日志包体内容
-     * 
-     * @details 
-     * 格式标准：[YYYY-MM-DD HH:MM:SS.ms] [LEVEL] Message
-     * 
-     * @note 
-     * - 性能说明：该函数包含文件 IO 刷盘操作 (flush)，频繁调用可能会对高吞吐业务产生微小延迟。
-     * - 线程安全：受 mtx_ 保护。
+     * @brief 记录日志
+     * @param level 日志级别
+     * @param msg 日志内容字符串
      */
     void log(LogLevel level, const std::string& msg) {
         if (!running_) return;

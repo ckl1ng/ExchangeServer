@@ -11,10 +11,9 @@
 using json = nlohmann::json;
 
 
-/**
- * @struct Session
- * @brief 客户端连接会话上下文 (Client Session Context)
- * 
+/** * @struct Session
+ * @brief 会话对象，绑定 TCP 连接与用户状态
+ * @details 每个 TCP 连接对应一个 Session 实例，Session 中记录了用户的登录状态、用户名、用户ID等信息，以及一个缓冲区用于存储未处理的字节流数据。
  * 维护单个 TCP 连接在生命周期内的所有持久化状态。
  */
 struct Session { 
@@ -25,16 +24,7 @@ struct Session {
     uint64_t user_id = 0;
     std::mutex mtx;
 
-    /**
-     * @brief 构造函数
-     * @param f 客户端套接字
-     */
     Session(int f) : fd(f) {}
-    /**
-     * @brief 检查当前会话是否已通过身份验证
-     * @return true 已登录
-     * @return false 未登录
-     */
     bool isLoggedIn() const { return !username.empty(); }
 };
 
@@ -46,17 +36,9 @@ struct Session {
  */
 class IHandler {
 public:
-    /**
-     * @brief 虚析构函数，确保派生类资源正确释放
-     */
+
     virtual ~IHandler() = default;
-    /**
-     * @brief 业务逻辑处理接口
-     * 
-     * @param session 当前请求所属的会话对象指针
-     * @param req     解析后的 JSON 请求报文
-     * @return json   返回给客户端的 JSON 响应报文
-     */
+    // 业务逻辑处理接口
     virtual std::string handle(Session* session, const char* req, uint32_t req_len) = 0;
 };
 
@@ -67,33 +49,24 @@ public:
  * 负责维护请求指令 (Action) 与处理器 (Handler) 的映射关系。
  */
 class Router {
-public:
-    /**
-     * @brief 处理器映射表
-     */
+private:
+    
+    // 消息类型到处理器实例的映射表，支持动态注册和高效查找
     std::unordered_map<MsgType, std::shared_ptr<IHandler>> handlers_;
-    /**
-    /**
-     * @brief 注册业务处理器
-     * 
-     * @param type    消息类型枚举
-     * @param handler 处理器实例指针
-     */
+
+    Router() = default; // 私有构造函数，禁止外部实例化
+public:
+    static Router& getInstance() {
+        static Router instance;
+        return instance;
+    }
+
+    // 注册处理器实例到对应的消息类型
     void registerHandler(MsgType type, std::shared_ptr<IHandler> handler) {
         handlers_[type] = handler;
     }
 
-    /**
-     * @brief 核心分发逻辑
-     * 
-     * 根据请求中的 MsgType 查找并调用对应的处理器。
-     * 
-     * @param Session 当前会话对象指针
-     * @param type    请求的消息类型
-     * @param req     客户端请求数据指针
-     * @param req_len 请求包体长度
-     * @return std::string 业务处理结果（二进制数据）
-     */
+    // 根据消息类型分发请求到对应的处理器
     std::string dispatch(Session* Session, MsgType type, const char* req, uint32_t req_len) {
         // 尝试从 JSON 中提取 action 字段，默认为空
         if (handlers_.count(type)) {
